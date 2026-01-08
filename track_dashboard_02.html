@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Superset - 풀스택 트랙 심층 대시보드</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Inter', sans-serif; color: #2d3748; }
+        .sidebar { width: 260px; background: #fff; border-right: 1px solid #d1d5db; height: 100vh; position: fixed; padding: 20px; z-index: 100; }
+        .content { margin-left: 260px; padding: 24px; }
+        .chart-row { background: white; border-radius: 8px; border: 1px solid #e2e8f0; padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .tab-item { padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent; transition: 0.3s; font-weight: 500; color: #718096; }
+        .tab-item.active { border-bottom: 2px solid #00A699; color: #00A699; background: #f0fdfa; }
+        .sticky-tabs { position: sticky; top: 0; background: white; z-index: 10; border-bottom: 1px solid #e2e8f0; }
+        .filter-group { margin-bottom: 20px; }
+        .filter-label { font-size: 11px; font-weight: 700; color: #4a5568; text-transform: uppercase; margin-bottom: 6px; display: block; }
+        select { width: 100%; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<aside class="sidebar">
+    <div class="mb-8 font-bold text-xl text-[#00A699]">Apache Superset</div>
+    <div class="filter-group">
+        <label class="filter-label">Track Name</label>
+        <select><option>Full-stack Developer</option></select>
+    </div>
+    <div class="filter-group">
+        <label class="filter-label">Curriculum</label>
+        <select><option>JS/React Master</option></select>
+    </div>
+    <div class="filter-group">
+        <label class="filter-label">Cohort (Global Filter)</label>
+        <select id="global-cohort-select" onchange="switchCohort(this.value)">
+            <option value="1">1기 (High Progress)</option>
+            <option value="2">2기 (Mid Range)</option>
+            <option value="3" selected>3기 (Risk/Closed)</option>
+        </select>
+    </div>
+    <hr class="my-6">
+    <p class="text-xs text-gray-400">파이 차트의 기수 섹션을 클릭하면 해당 기수 상세 데이터로 자동 전환됩니다.</p>
+</aside>
+
+<main class="content">
+    <div class="flex space-x-1 border-b border-gray-200 mb-6 bg-white p-2 rounded-t-lg sticky-tabs">
+        <div class="tab-item" id="tab-all" onclick="switchCohort('all')">전체기수보기</div>
+        <div class="tab-item" id="tab-1" onclick="switchCohort('1')">1기수</div>
+        <div class="tab-item" id="tab-2" onclick="switchCohort('2')">2기수</div>
+        <div class="tab-item active" id="tab-3" onclick="switchCohort('3')">3기수</div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-6 mb-6">
+        <div class="col-span-5 chart-row h-[400px]">
+            <h3 class="font-bold text-gray-700 mb-4">기수별 인원 구성 (Click to Filter)</h3>
+            <div id="main-pie" style="height: 320px;"></div>
+        </div>
+        <div class="col-span-7 chart-row h-[400px]">
+            <h3 class="font-bold text-gray-700 mb-4">기수별 종합 지표 (Histogram)</h3>
+            <div id="main-hist" style="height: 320px;"></div>
+        </div>
+    </div>
+
+    <div class="chart-row">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold text-gray-700">챕터별 분포 (Violin Plot)</h3>
+            <span class="text-xs text-red-500 font-bold" id="closed-tag"></span>
+        </div>
+        <div class="flex space-x-1 border-b border-gray-200 mb-4">
+            <div class="tab-item active" id="tab-progress" onclick="switchViolin('progress')">학습 진도율</div>
+            <div class="tab-item" id="tab-test-rate" onclick="switchViolin('test-rate')">테스트 응시율</div>
+            <div class="tab-item" id="tab-score" onclick="switchViolin('score')">테스트 성적</div>
+        </div>
+        <div id="violin-chart" style="height: 350px;"></div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-6">
+        <div class="col-span-7 chart-row">
+            <h3 class="font-bold text-gray-700 mb-4">일별 출석 히트맵 (Calendar)</h3>
+            <div id="calendar-attend" style="height: 280px;"></div>
+            <div id="calendar-legend" class="mt-4 text-sm text-gray-600"></div>
+        </div>
+        <div class="col-span-5 chart-row">
+            <h3 class="font-bold text-gray-700 mb-4">만족도 분석 (Radar)</h3>
+            <div id="radar-sat" style="height: 280px;"></div>
+        </div>
+    </div>
+</main>
+
+<script>
+    let currentCohort = '3';
+    let currentViolin = 'progress';
+    const cohorts = {
+        '1': { count: 30, prog: 95, attend: 60, sat: 70, color: '#5B8FF9', status: '진행완료' },
+        '2': { count: 18, prog: 70, attend: 85, sat: 80, color: '#5AD8A6', status: '진행완료' },
+        '3': { count: 3, prog: 40, attend: 92, sat: 95, color: '#F6BD16', status: '14챕터 폐강' },
+        'all': { count: 51, prog: 83, attend: 71, sat: 75, color: '#F5222D', status: '' }
+    };
+
+    // 초기화
+    document.addEventListener('DOMContentLoaded', () => {
+        renderAll();
+    });
+
+    function switchCohort(id) {
+        currentCohort = id;
+        // 탭 상태 업데이트
+        document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+        document.getElementById(`tab-${id}`).classList.add('active');
+        document.getElementById('global-cohort-select').value = id === 'all' ? '3' : id;
+        document.getElementById('closed-tag').innerText = cohorts[id].status === '14챕터 폐강' ? '⚠️ 14챕터 이후 데이터 없음 (폐강)' : '';
+        // 챕터별 분포 탭을 학습 진도율로 리셋
+        currentViolin = 'progress';
+        document.querySelectorAll('#tab-progress, #tab-test-rate, #tab-score').forEach(el => el.classList.remove('active'));
+        document.getElementById('tab-progress').classList.add('active');
+        renderAll();
+    }
+
+    function switchViolin(type) {
+        currentViolin = type;
+        // 탭 업데이트
+        document.querySelectorAll('#tab-progress, #tab-test-rate, #tab-score').forEach(el => el.classList.remove('active'));
+        document.getElementById(`tab-${type}`).classList.add('active');
+        renderViolin();
+    }
+
+    function renderAll() {
+        renderPie();
+        renderHist();
+        renderViolin();
+        renderCalendar();
+        renderRadar();
+    }
+
+    // 1. 파이 차트 (센터 인원수 및 클릭 인터랙션)
+    function renderPie() {
+        const chart = echarts.init(document.getElementById('main-pie'));
+        let data, titleText, subtext;
+        if (currentCohort === 'all') {
+            data = [
+                { value: 30, name: '1기', itemStyle: { color: cohorts['1'].color } },
+                { value: 18, name: '2기', itemStyle: { color: cohorts['2'].color } },
+                { value: 3, name: '3기', itemStyle: { color: cohorts['3'].color } }
+            ];
+            titleText = '51';
+            subtext = 'Total Students';
+        } else {
+            data = [{ value: cohorts[currentCohort].count, name: `${currentCohort}기`, itemStyle: { color: cohorts[currentCohort].color } }];
+            titleText = cohorts[currentCohort].count.toString();
+            subtext = `${currentCohort}기 Students`;
+        }
+        chart.setOption({
+            title: { text: titleText, subtext: subtext, left: 'center', top: '38%', textStyle: { fontSize: 32 } },
+            series: [{
+                type: 'pie', radius: ['50%', '80%'],
+                data: data,
+                label: { formatter: '{b}\n{c}명' }
+            }]
+        });
+        chart.on('click', (params) => {
+            const id = params.name.replace('기', '');
+            switchCohort(id);
+        });
+    }
+
+    // 2. 기수별 히스토그램
+    function renderHist() {
+        const chart = echarts.init(document.getElementById('main-hist'));
+        const indicators = ['평균 학습률', '평균 응시율', '평균 출석률', '만족도'];
+        const dataMap = {
+            '1': [95, 90, 60, 70],
+            '2': [70, 65, 85, 80],
+            '3': [40, 30, 92, 95],
+            'all': [83, 76, 71, 75]
+        };
+        const allSeries = [
+            { name: '전체', type: 'bar', data: dataMap['all'], itemStyle: { color: cohorts['all'].color } },
+            { name: '1기', type: 'bar', data: dataMap['1'], itemStyle: { color: cohorts['1'].color } },
+            { name: '2기', type: 'bar', data: dataMap['2'], itemStyle: { color: cohorts['2'].color } },
+            { name: '3기', type: 'bar', data: dataMap['3'], itemStyle: { color: cohorts['3'].color } }
+        ];
+        let selected = {};
+        if (currentCohort === 'all') {
+            selected = { '전체': true, '1기': true, '2기': true, '3기': true };
+        } else {
+            selected = { '전체': false, '1기': false, '2기': false, '3기': false, [currentCohort + '기']: true };
+        }
+        chart.setOption({
+            legend: { top: 'bottom', selected: selected },
+            xAxis: { type: 'category', data: indicators },
+            yAxis: { type: 'value', max: 100 },
+            series: allSeries
+        });
+    }
+
+    // 3. 바이올린 플롯 (Boxplot + Violin Shape)
+    function renderViolin() {
+        const chart = echarts.init(document.getElementById('violin-chart'));
+        const chapterCount = currentCohort === '3' ? 14 : 16;
+        const chapters = Array.from({length: chapterCount}, (_, i) => `Ch ${i+1}`);
+        
+        if (currentViolin === 'test-rate') {
+            // 누적 막대그래프
+            const baseRange = [10, 30, 40, 70, 90];
+            const data = chapters.map(() => {
+                const rate = baseRange[Math.floor(Math.random() * baseRange.length)] + (Math.random() * 20 - 10);
+                return Math.max(0, Math.min(100, rate));
+            });
+            const totalStudents = currentCohort === 'all' ? 51 : cohorts[currentCohort].count;
+            chart.setOption({
+                title: { text: '테스트 응시율 (%)', left: 'center' },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: (params) => {
+                        const chapter = params[0].name;
+                        const rates = params.filter(p => p.value > 0).map(p => `${p.seriesName}: ${p.value}%`);
+                        const absent = params.find(p => p.seriesName === '미응시' && p.value > 0);
+                        if (absent) {
+                            const totalStudents = currentCohort === 'all' ? 51 : cohorts[currentCohort].count;
+                            const absentCount = Math.round(totalStudents * (absent.value / 100));
+                            rates.push(`미응시 인원: ${absentCount}명`);
+                        }
+                        return `${chapter}<br>${rates.join('<br>')}`;
+                    }
+                },
+                xAxis: { type: 'category', data: chapters },
+                yAxis: { type: 'value', max: 100 },
+                series: [
+                    {
+                        name: '응시',
+                        type: 'bar',
+                        stack: 'total',
+                        data: data,
+                        itemStyle: { color: cohorts[currentCohort].color }
+                    },
+                    {
+                        name: '미응시',
+                        type: 'bar',
+                        stack: 'total',
+                        data: data.map(d => 100 - d),
+                        itemStyle: { color: '#e2e8f0' }
+                    }
+                ]
+            });
+            return;
+        }
+        
+        let baseRange, title;
+        if (currentViolin === 'progress') {
+            baseRange = [20, 45, 50, 85, 100];
+            title = '학습 진도율 (%)';
+        } else {
+            baseRange = [30, 55, 65, 85, 95];
+            title = '테스트 점수 (Score)';
+        }
+
+        // 데이터 생성 (랜덤 분포)
+        const data = chapters.map(() => {
+            return baseRange.map(v => Math.max(0, Math.min(100, v + (Math.random() * 20 - 10)))).sort((a,b)=>a-b);
+        });
+
+        // 박스 플롯 데이터
+        const boxData = data.map(vals => {
+            return [vals[0], vals[Math.floor(vals.length/4)], vals[Math.floor(vals.length/2)], vals[Math.floor(3*vals.length/4)], vals[vals.length-1]];
+        });
+
+        // 바이올린 모사: 히스토그램 기반 폴리곤
+        const violinSeries = chapters.map((ch, i) => {
+            const vals = data[i];
+            const bins = Array(10).fill(0);
+            vals.forEach(v => {
+                const bin = Math.floor((v / 100) * 10);
+                bins[Math.min(bin, 9)]++;
+            });
+            const maxBin = Math.max(...bins);
+            const points = [];
+            for (let b = 0; b < 10; b++) {
+                const y = (b / 10) * 100;
+                const width = (bins[b] / maxBin) * 0.4;
+                points.push([i - width, y]);
+            }
+            for (let b = 9; b >= 0; b--) {
+                const y = (b / 10) * 100;
+                const width = (bins[b] / maxBin) * 0.4;
+                points.push([i + width, y]);
+            }
+            return {
+                type: 'custom',
+                renderItem: function (params, api) {
+                    const coords = points.map(p => api.coord(p));
+                    return {
+                        type: 'polygon',
+                        shape: { points: coords },
+                        style: { fill: cohorts[currentCohort].color, opacity: 0.3 }
+                    };
+                },
+                data: [0]
+            };
+        });
+
+        chart.setOption({
+            title: { text: title, left: 'center' },
+            tooltip: { trigger: 'item' },
+            xAxis: { type: 'category', data: chapters, boundaryGap: true },
+            yAxis: { type: 'value', max: 100 },
+            series: [
+                {
+                    name: '박스 플롯',
+                    type: 'boxplot',
+                    data: boxData,
+                    itemStyle: { color: cohorts[currentCohort].color, opacity: 0.6 }
+                },
+                ...violinSeries,
+                {
+                    name: '이상치',
+                    type: 'scatter',
+                    data: [
+                        [2, 98, '박지민'], [5, 12, '김철수'], [chapterCount-1, 15, '최도현']
+                    ],
+                    symbolSize: 8,
+                    itemStyle: { color: '#2d3748' },
+                    tooltip: { formatter: (p) => `${p.data[2]}: ${p.data[1]}` }
+                }
+            ]
+        });
+    }
+
+    function renderCalendar() {
+        const chart = echarts.init(document.getElementById('calendar-attend'));
+        let months = [];
+        let cohortData = [];
+        if (currentCohort === 'all') {
+            // 각 기수별 기간 병합
+            const cohortPeriods = {
+                '1': ['2025-01', '2025-02', '2025-03', '2025-04'],
+                '2': ['2025-03', '2025-04', '2025-05', '2025-06'],
+                '3': ['2025-05', '2025-06', '2025-07', '2025-08']
+            };
+            for (const [cid, mons] of Object.entries(cohortPeriods)) {
+                mons.forEach(month => {
+                    if (!months.includes(month)) months.push(month);
+                });
+            }
+            months.sort();
+            cohortData = ['1', '2', '3'];
+        } else {
+            if (currentCohort === '1') months = ['2025-01', '2025-02', '2025-03', '2025-04'];
+            else if (currentCohort === '2') months = ['2025-03', '2025-04', '2025-05', '2025-06'];
+            else months = ['2025-05', '2025-06', '2025-07', '2025-08'];
+            cohortData = [currentCohort];
+        }
+        const days = [];
+        months.forEach(month => {
+            for (let d = 1; d <= 31; d++) {
+                const dateStr = `${month}-${d.toString().padStart(2,'0')}`;
+                const date = new Date(dateStr);
+                if (date.getDay() >= 1 && date.getDay() <= 5) { // 월~금
+                    days.push(dateStr);
+                }
+            }
+        });
+        const totalStudents = currentCohort === 'all' ? 51 : cohorts[currentCohort].count;
+        const data = days.map(day => {
+            let attend = 0;
+            if (currentCohort === 'all') {
+                // 각 기수별로 attend 계산
+                for (const cid of cohortData) {
+                    const mons = cid === '1' ? ['2025-01', '2025-02', '2025-03', '2025-04'] :
+                               cid === '2' ? ['2025-03', '2025-04', '2025-05', '2025-06'] :
+                               ['2025-05', '2025-06', '2025-07', '2025-08'];
+                    if (mons.some(m => day.startsWith(m))) {
+                        attend += Math.floor(Math.random() * (cohorts[cid].count + 1));
+                        if (cid === '3' && day >= '2025-08-18') attend = 0; // 3기 마지막 2주
+                    }
+                }
+            } else {
+                attend = Math.floor(Math.random() * (totalStudents + 1));
+                if (currentCohort === '3' && day >= '2025-08-18') attend = 0;
+            }
+            return [day, attend];
+        });
+        chart.setOption({
+            visualMap: { 
+                show: true, 
+                min: 0, 
+                max: totalStudents, 
+                inRange: { color: ['#ebedf0', cohorts[currentCohort].color] },
+                orient: 'horizontal',
+                bottom: 10,
+                left: 'center',
+                text: [totalStudents + '명', '0명']
+            },
+            calendar: { range: '2025', cellSize: ['auto', 15], splitLine: { show: false } },
+            series: { 
+                type: 'heatmap', 
+                coordinateSystem: 'calendar', 
+                data: data,
+                tooltip: { formatter: (p) => `${p.data[0]}: ${p.data[1]}/${totalStudents} 출석` }
+            }
+        });
+        // 범례 텍스트
+        const legendDiv = document.getElementById('calendar-legend');
+        legendDiv.innerHTML = `<span>0명 - ${totalStudents}명</span>`;
+    }
+
+    function renderRadar() {
+        const chart = echarts.init(document.getElementById('radar-sat'));
+        const indicators = [{name:'강사', max:5}, {name:'콘텐츠', max:5}, {name:'운영', max:5}];
+        const allSeries = [
+            { type: 'radar', data: [{ value: [3.0, 3.5, 4.0], name: '1기' }], areaStyle: { opacity: 0.3 }, itemStyle: { color: cohorts['1'].color }, tooltip: { trigger: 'item', formatter: (params) => `${params.seriesName}: ${params.value}점` } },
+            { type: 'radar', data: [{ value: [4.0, 4.0, 4.0], name: '2기' }], areaStyle: { opacity: 0.3 }, itemStyle: { color: cohorts['2'].color }, tooltip: { trigger: 'item', formatter: (params) => `${params.seriesName}: ${params.value}점` } },
+            { type: 'radar', data: [{ value: [4.9, 4.75, 4.6], name: '3기' }], areaStyle: { opacity: 0.3 }, itemStyle: { color: cohorts['3'].color }, tooltip: { trigger: 'item', formatter: (params) => `${params.seriesName}: ${params.value}점` } },
+            { type: 'radar', data: [{ value: [3.75, 3.8, 3.55], name: '전체 평균' }], areaStyle: { opacity: 0.3 }, itemStyle: { color: cohorts['all'].color }, tooltip: { trigger: 'item', formatter: (params) => `${params.seriesName}: ${params.value}점` } }
+        ];
+        let selected = {};
+        if (currentCohort === 'all') {
+            selected = { '1기': true, '2기': true, '3기': true, '전체 평균': true };
+        } else {
+            selected = { '1기': false, '2기': false, '3기': false, '전체 평균': false, [currentCohort + '기']: true };
+        }
+        chart.setOption({
+            legend: { data: ['1기', '2기', '3기', '전체 평균'], right: 10, selected: selected },
+            radar: { indicator: indicators },
+            series: allSeries
+        });
+    }
+</script>
+</body>
+</html>
